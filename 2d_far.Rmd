@@ -1,0 +1,264 @@
+---
+title: "2d far"
+author: "Qin Wen"
+date: "12/9/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## import files and packages, some might not need
+
+```{r}
+source("./2d_Util_varprop.R")
+library(expm)
+library(sail)
+library(fda)
+library(vars)
+library(caret)
+library(foreach)
+library(doParallel)
+library(grpreg)
+library(gglasso)
+library(numbers)
+```
+
+## fPCA, nuclear, Frobenius
+
+```{r}
+start.all = Sys.time()
+print('starttime')
+print(start.all)
+RR = 20
+n.set = 6#seq(20,2000,200)
+R.set = 36#c(6,20,50)# not too large K might be non-invertible, not too small or ridge wont be good ... 
+noise_range = 0.1
+sampling_noise = 0
+#spectral_norm = 0.8
+spectral_norm.set = c(0.5,0.8,1)
+totalT_train.set = 400#c(50,100,150,200)
+sigma.kernel = 1#sqrt(10)#sqrt(1)
+error.A = c()
+error.PE = c()
+error.A.tr = c()
+error.PE.tr = c()
+error.A.aue = c()
+error.PE.aue = c()
+error.A.ridge = c()
+error.PE.ridge = c()
+error.A.tr.seq = c()
+error.PE.tr.seq = c()
+error.A.aue.seq = c()
+error.PE.aue.seq = c()
+error.A.ridge.seq = c()
+error.PE.ridge.seq = c()
+# RKHS optimization setting
+niter_rkhs <- 1e7 # maximum number of iteration
+stepL0 <- 1 # initial stepL in JiYe(2009) Algorithm 2
+gamma_rkhs <- 1.01 # gamma in JiYe(2009) Algorithm 2
+tolerance_rkhs <- 10^(-8) # relative tolerance for optimization to stop JiYe(2009)
+error.A = c()
+error.PE = c()
+lambda_penalty.gcv <- 10^c(seq(-15,-4,0.5))
+lambda_penalty <- 10^c(seq(-6,-5,0.5),-3,-2,0)
+lambda_penalty.fpca = c(0,0.01,0.1,1,10)#0.01#c(0.01,0.1,0.5,1)#c(0,0.01,0.1,1,10)
+lambda_smooth = 0
+lambda.kernel = 10^(-1)#c(seq(-3,0,0.5))
+c = 10^(-4)
+R = R.set
+nbasis1 = 6#5
+nbasis2 = 6#5
+nbasis = nbasis1*nbasis2
+norder = 4
+  norder <- 4
+for (spectral_norm in spectral_norm.set){    
+    totalT_train = totalT_train.set[1]
+  totalT_test <- round(totalT_train*0.2)
+  totalT <- totalT_train + totalT_test
+  tr_Aerr = c()
+  tr_prederr = c()
+  aue_Aerr = c()
+  aue_prederr = c()
+   ridge_Aerr = c()
+  ridge_prederr = c() 
+    R = R.set
+  Lambda = spectral_norm*Lambda.low.rank.mul(Nregion = 4,R = R)
+    length.out = 20#1e3                                      
+       approx_points <- cbind(rep(1:length.out,each = length.out),rep(1:length.out,length.out))/length.out
+    A_true_integral <- sapply(1:nrow(approx_points),function(j) sapply(1:nrow(approx_points),function(i) A_transition(approx_points[i,],approx_points[j,],Lambda)))
+  for (time in 1:RR){
+  N = n.set
+  sample_points = cbind(rep(1:N,each = N),rep(1:N,N))/N
+  data = far2.generate(totalT_train,N,R,Lambda,sample_points,noise_range)#,noise_range,sampling_noise)
+  X_true = data$X.test
+  far_sample = data$Xtotal   
+  A_true = data$Atrue
+  n = N^2
+      K <- sapply(1:(n),function(j) sapply(1:(n),function(i) kernel(x1 = sample_points[i,],x2 = sample_points[j,],sigma.kernel = sigma.kernel)))
+    X <- t(far_sample[2:totalT_train,]) # observation matrix
+    Xl <- t(far_sample[1:(totalT_train-1),]) # lagged observation matrix
+
+V = function(lambda,lambda.kernel) ridge.GCV(K = K,X = X,Xl = Xl,lambda,lambda.kernel)
+value = sapply(lambda_penalty.gcv,function(lambda) V(lambda,lambda.kernel=lambda.kernel))
+lambda.gcv = lambda_penalty.gcv[which.min(value)]              
+print(lambda.gcv)                                           
+                                                          
+K = K + lambda.kernel*diag(n)
+K.inv = solve(K)                                                          
+sqrtK = sqrtm(K)
+n = nrow(K)
+S0 = sqrtK%*%Xl/n
+decomp.S0 = svd(S0%*%t(S0))
+U1 = decomp.S0$u
+D1 = decomp.S0$d
+decomp.K = svd(K)
+U2 = decomp.K$u
+D2 = decomp.K$d                                                          
+                                                          
+W_explicit = ridge.vectorize.d.2(K = K,X = X,Xl = Xl,U1 = U1,U2 = U2,D1 = D1,D2 = D2,S0 = S0,sqrtK = sqrtK,lambda = lambda.gcv)
+D_explicit <- solve(sqrtK)%*%W_explicit%*%solve(sqrtK)
+    A_explicit <- sqrtK%*%W_explicit%*%sqrtK
+      X_forecast_ridge <- far_sample[totalT_train:(totalT-1),]%*%t(A_explicit)/n
+       length.out = 20#1e3                                      
+       approx_points <- cbind(rep(1:length.out,each = length.out),rep(1:length.out,length.out))/length.out#seq(0,1,length.out=1e3)
+  A_est_integral.K <- sapply(1:n,function(j) sapply(1:nrow(approx_points),function(i) kernel(x1 = approx_points[i,],x2 = sample_points[j,],sigma.kernel = sigma.kernel)))  
+  A_explicit_integral <- A_est_integral.K%*%D_explicit%*%t(A_est_integral.K)  
+                                             
+      ridge_Aerr <-c(ridge_Aerr, mean((A_true_integral-A_explicit_integral)^2)/mean(A_true_integral^2))
+      ridge_prederr = c(ridge_prederr,mean(apply(X_true-X_forecast_ridge, 1, mse)))
+      
+                                                    
+   ## aue
+basis1 = create.bspline.basis(rangeval=c(0,1), nbasis=nbasis1, norder=norder)
+basis2 = create.bspline.basis(rangeval=c(0,1), nbasis=nbasis2, norder=norder)
+                          
+# Cross-validation to select lambda
+    cv_error <- c()
+    for(lambda_pen in lambda_penalty.fpca) {
+      tmp_cv_error <- cv_fpca.2d(cv_folds = 5,lambda_pen=lambda_pen,lambda_smooth = lambda_smooth, sample_points = sample_points,far_sample = far_sample[1:totalT_train,],basis1 = basis1,basis2 = basis2,npoints_approx = 20)
+      cv_error <- rbind(cv_error, tmp_cv_error)
+    }
+    lambda_pen_cv_selected.aue <- lambda_penalty.fpca[which.min(apply(cv_error,1,mean))]  
+    #print(lambda_pen_cv_selected)                                                
+                                                    
+x_curve_train <- smooth.basis.2d(argvals=sample_points, y=t(far_sample[1:totalT_train,]), fdParob1=basis1, fdParob2=basis2, lambda = lambda_smooth)
+x_curve_test <- smooth.basis.2d(argvals=sample_points, y=t(far_sample[(totalT_train):(totalT-1),]), fdParob1=basis1, fdParob2=basis2, lambda = lambda_smooth)                                                                                                        
+                                                    
+aue.output = aue(sample_points = sample_points,x_curve_train = x_curve_train,lambda = lambda_pen_cv_selected.aue, nbasis = nbasis,totalT_train = totalT_train)                                                      
+x_eigenfunc = aue.output$eigenfunc
+A_var = aue.output$varmat 
+                                                    
+    # estimating transition operator A
+    #x_eigenfunc <- fpca$harmonics
+    A_var_est <- eval.fd.2d(sample_points, x_eigenfunc)%*%A_var%*%t(eval.fd.2d(sample_points, x_eigenfunc))                                                
+                                                                                                     
+    length.out.aue = 20
+    approx_points.aue <- cbind(rep(1:length.out.aue,each = length.out.aue),rep(1:length.out.aue,length.out.aue))/length.out.aue                                                
+    
+    x_scores_test <- t(eval.fd.2d(approx_points.aue, x_eigenfunc))%*%eval.fd.2d(approx_points.aue, x_curve_test$fd)/nrow(approx_points.aue)
+    if(is.null(dim(A_var))){
+      x_score_forecast <- A_var*x_scores_test
+    }else{
+      x_score_forecast <- A_var%*%x_scores_test
+    }
+    X_forecast_aue <- t(eval.fd.2d(sample_points, x_eigenfunc)%*%x_score_forecast)  
+                                                    
+    A_var_est_integral <- eval.fd.2d(approx_points.aue, x_eigenfunc)%*%A_var%*%t(eval.fd.2d(approx_points.aue, x_eigenfunc))
+    aue_Aerr <- c(aue_Aerr,mean(mean((A_true_integral-A_var_est_integral)^2)/mean(A_true_integral^2)))
+    aue_prederr <- c(aue_prederr,mean(apply(X_true-X_forecast_aue, 1, mse)))                                                  
+                                                    
+                                             
+  #######################################################
+    # RKHS estimation 
+    #K <- outer(sample_points, sample_points, kernel) # kernel matrix K(si,sj)
+    K_sqr <- sqrtK#sqrtm(K) # K^(1/2)
+    Z <- K_sqr%*%Xl
+    gradf_part1 <- -2/n*K_sqr%*%X%*%t(Z)
+    Z2 <- 2/n^2*Z%*%t(Z)
+      init_zero = "Fro"
+    # Cross-validation to select lambda
+    cv_error <- c()
+    for(lambda_pen in lambda_penalty) {
+      tmp_cv_error <- cv_rkhs(cv_folds=5, X_all=X, Xl_all=Xl, K=K, K_sqr=K_sqr, lambda_pen=lambda_pen, stepL0=stepL0,gamma=gamma_rkhs, niter=niter_rkhs, tol=tolerance_rkhs, A_true=A_true, A_fro_est=A_explicit,A_var_est=A_var_est,n = n,init_zero=init_zero)
+      cv_error <- rbind(cv_error, tmp_cv_error)
+    }
+    lambda_pen_cv_selected <- lambda_penalty[which.min(apply(cv_error,1,mean))]
+    
+    # Optimization of the penalized loss function (we try three different initial points)
+    if(init_zero == TRUE){
+      W_init <- solve(K_sqr)%*%matrix(0,n,n)%*%solve(K_sqr) # initial using Aue(2014) estimation
+    }else if(init_zero == "Fro"){
+      W_init <- solve(K_sqr)%*%A_explicit%*%solve(K_sqr) # initial using Fro estimation
+    }
+    else if (init_zero == "aue"){
+        W_init <- solve(K_sqr)%*%A_var_est%*%solve(K_sqr) # initial using Fro estimationv 
+    }
+    time1 <- proc.time()
+    #opt_result <- trace_norm_optim_Rcpp(W_init=W_init, X=X, Z=Z, Z2=Z2, K=K, K_sqr=K_sqr, gradf_part1=gradf_part1,
+                                        #lambda_pen=lambda_pen_cv_selected, stepL0=stepL0, gamma=gamma_rkhs, niter=niter_rkhs,
+                                        #tol=tolerance_rkhs, n=n)
+    opt_result <- trace_norm_optim_fast(W_init=W_init, X=X, Z=Z, Z2=Z2, K=K, K_sqr=K_sqr, gradf_part1=gradf_part1,
+                                        lambda_pen=lambda_pen_cv_selected, stepL0=stepL0, gamma=gamma_rkhs, niter=niter_rkhs,
+                                        tol=tolerance_rkhs)  
+    time2 <- proc.time()
+    
+    # Summarize optimization result
+    rkhs_fvalues <- opt_result$value
+    rkhs_niters <- opt_result$iter
+    
+    W_est <- opt_result$par
+    D_est <- solve(K_sqr)%*%W_est%*%solve(K_sqr)
+    A_est <- K%*%D_est%*%K
+    A_est_integral <- A_est_integral.K%*%D_est%*%t(A_est_integral.K)  
+    
+    # one step ahead prediction
+    X_forecast_rkhs <- far_sample[totalT_train:(totalT-1),]%*%t(A_est)/n
+    
+    #######################################################     
+                                                    
+    # RKHS
+    tr_Aerr <- c(tr_Aerr,mean((A_true_integral-A_est_integral)^2)/mean(A_true_integral^2))
+    tr_prederr <- c(tr_prederr,mean(apply(X_true-X_forecast_rkhs, 1, mse))) 
+      current_result <- list(experiment_index=time, aue_Aerr=aue_Aerr, aue_prederr=aue_prederr, 
+                           rkhs_Aerr=tr_Aerr, rkhs_prederr=tr_prederr,
+                             ridge_Aerr=ridge_Aerr, ridge_prederr=ridge_prederr,
+                           rkhs_fvalues=rkhs_fvalues, rkhs_niters=rkhs_niters,
+                          lambda_pen_cv_selected=lambda_pen_cv_selected,
+                           opt_result=opt_result)                                                
+                                                                                                                                                                                                                            
+    }                               
+    error.A.ridge.seq = cbind(error.A.ridge.seq,ridge_Aerr)  
+  error.PE.ridge.seq = cbind(error.PE.ridge.seq,ridge_prederr)    
+  error.A.ridge = c(error.A.ridge,mean(ridge_Aerr))
+  error.PE.ridge = c(error.PE.ridge,mean(ridge_prederr))
+  error.ridge = list(Aerr = error.A.ridge, Xerr = error.PE.ridge, Aerr.seq = error.A.ridge.seq, 
+                     Xerr.seq = error.PE.ridge.seq)  
+  error.A.aue.seq = cbind(error.A.aue.seq,aue_Aerr)  
+  error.PE.aue.seq = cbind(error.PE.aue.seq,aue_prederr)  
+  error.A.aue = c(error.A.aue,mean(aue_Aerr))
+  error.PE.aue = c(error.PE.aue,mean(aue_prederr)) 
+  error.aue = list(Aerr.aue = error.A.aue, Xerr.aue = error.PE.aue, Aerr.aue.seq = error.A.aue.seq, 
+                   Xerr.aue.seq = error.PE.aue.seq)
+                                                          
+  error.A.tr = c(error.A.tr,mean(tr_Aerr))
+  error.PE.tr = c(error.PE.tr,mean(tr_prederr))
+  error.A.tr.seq = cbind(error.A.tr.seq,tr_Aerr)  
+  error.PE.tr.seq = cbind(error.PE.tr.seq,tr_prederr)                                                         
+  error.tr = list(Aerr = error.A.tr, Xerr = error.PE.tr, Aerr.tr.seq = error.A.tr.seq, 
+                   Xerr.tr.seq = error.PE.tr.seq)                                                        
+   #print(mean(ridge_Aerr)) 
+   #print(mean(tr_Aerr))
+  #print(mean(aue_Aerr))                                                                   
+                                                    
+}
+error.ridge
+error.tr  
+error.aue                                                        
+end.all = Sys.time()
+print('duration')
+print(difftime(end.all, start.all, units = "secs")[[1]])
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
